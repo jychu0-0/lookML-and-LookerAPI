@@ -52,4 +52,4 @@ Captionless Image
  SELECT name, credit_limit, first_invoice.amount as first_invoice_amount FROM customer LEFT JOIN (SELECT DISTINCT customer_id, amount, min(created_at) AS first_invoice_date FROM invoice) AS first_invoice on customer.id = first_invoice.customer_id
 
 8. [BONUS] Write a SQL query to show cumulative YTD (year to date) revenue per month
- rev_month, sum(revenue) OVER (PARTITON BY rev_year ORDER BY rev_month) (SELECT to_char(created_at, 'YYYY-MM') AS rev_month, tochar(created_at, 'YYYY') AS rev_year, sum(amount) AS revenue FROM invoice GROUP BY 1 ORDER BY 1) AS monthly_rev GROUP BY 1 ORDER BY 1
+ SELECT rev_month, sum(revenue) OVER (PARTITON BY rev_year ORDER BY rev_month) (SELECT to_char(created_at, 'YYYY-MM') AS rev_month, tochar(created_at, 'YYYY') AS rev_year, sum(amount) AS revenue FROM invoice GROUP BY 1 ORDER BY 1) AS monthly_rev GROUP BY 1 ORDER BY 1
