@@ -1,0 +1,112 @@
+Logic Questions
+
+
+Logic Question 1:
+
+Captionless Image
+
+1. Which of the above diagrams indicate the best relation between Women, Mothers and Engineers? *
+  A
+ B
+ C
+ D
+
+Logic Question 2:
+
+Captionless Image
+
+2. How many doctors are both players and artists? *
+  22
+ 25
+ 3
+ 30
+
+3. Blueberries cost more than strawberries. Blueberries cost less than raspberries. Raspberries cost more than strawberries and blueberries. If the first two statements are true, the third statement is *
+  True
+ False
+ Uncertain
+
+Math Section
+
+
+1. A grocer has sales of $1,104, $1,172, $1,095, $1,147 and $998 for five consecutive weeks. How much in sales must he make in the sixth week so that his average weekly sale is $1,100? *
+  $1,016
+ $1,100
+ $1,128
+ $1,084
+
+2. Seats for Math, Physics and Biology in a school are in the ratio of 5 : 7 : 8. There is a proposal to increase these seats by 40%, 50% and 75% respectively. What will be the ratio of increased seats? *
+  2:3:4
+ 6:7:8
+ 6:8:9
+ None of the above
+
+3. The price of an ornament was reduced by 20%, and an additional 10% reduction is taken during checkout. If the original price was $200, what is the final price? *
+  $144
+ $140
+ $160
+ $156
+ $148
+
+4. Jim has a gift card worth $100. He gets a coupon for a 20% discount on any item in the store. What is the maximum list price (value) that he could purchase? *
+  $120
+ $122
+ $125
+ $115
+ None of the above
+
+SQL Section
+
+
+SQL Question 1
+
+Captionless Image
+
+*
+ Option 1
+ Option 1  
+Option 2
+ Option 2  
+Option 3
+ Option 3  
+Option 4
+ Option 4
+
+For SQL Questions 2-4 consider the below "plan_history" table, and the output received from a limited select * query. This table contains subscription plan information for customers on a subscription service.
+
+Captionless Image
+
+Captionless Image
+
+2. Please write a SQL query that would count the active customers on 1/1/2016 *
+ SELECT count(distinct id) FROM plan_history WHERE plan_start::date =< '2016-01-01' AND (plan_end IS NULL OR plan_end::date > '2016-01-01') ... you could also coalesce(plan_end, <some arbitrary date far into the future>) >'2016-01-01 instead of having the "plan_end IS NULL OR"
+
+3. Please write a SQL query that would output the number of active customers by day. You may use table "all_dates" that contains a single field "dte", which has all of the dates from 2010 to 2020 *
+ SELECT all_dates.dte as date, count(distinct id) as active_users FROM all_dates LEFT JOIN plan_history ON (all_dates.dte BETWEEN plan_start::date AND plan_end::date)
+GROUP BY 1
+ORDER BY 1
+
+4. [BONUS] Please write a SQL query that would show simple churn over time (# of canceled customers / total customers previous month)
+ SELECT
+prior_active.month AS month
+, termed.term_count/ prior_active.active_users AS churn
+FROM (SELECT to_char(all_dates.dte + INTERVAL '1 month', 'YYYY-DD') as month, count(distinct id) as active_users FROM all_dates LEFT JOIN plan_history ON (all_dates.dte BETWEEN plan_start::date AND plan_end::date)
+GROUP BY 1
+ORDER BY 1) AS prior_active
+LEFT JOIN(SELECT to_char(plan_end, 'YYYY-MM') as term_month, count(distinct id) AS term_count FROM plan_history GROUP BY 1) AS termed on prior_active.month = termed.term_month
+
+SQL Questions 5 - 8
+
+Captionless Image
+
+5. Write a SQL query to calculate "Total Sales" (using Invoice Amount) for each City. *
+ SELECT customer.city, sum(invoice_totals.total) AS city_total FROM customer LEFT JOIN (SELECT customer_id, sum(coalesce(amount, 0)) as total FROM invoice GROUP BY 1) AS invoice_totals ON customer.id = invoice_totals.customer_id
+
+6. Modify the above SQL query to show only cities over $100,000 in Total Sales. *
+ SELECT city, city_total FROM(SELECT customer.city, sum(invoice_totals.total) AS city_total FROM customer LEFT JOIN (SELECT customer_id, sum(coalesce(amount, 0)) as total FROM invoice GROUP BY 1) AS invoice_totals ON customer.id = invoice_totals.customer_id) WHERE city_total >100000
+
+7. Write a SQL query to show : name, credit_limit, and the amount of their first invoice *
+ SELECT name, credit_limit, first_invoice.amount as first_invoice_amount FROM customer LEFT JOIN (SELECT DISTINCT customer_id, amount, min(created_at) AS first_invoice_date FROM invoice) AS first_invoice on customer.id = first_invoice.customer_id
+
+8. [BONUS] Write a SQL query to show cumulative YTD (year to date) revenue per month
+ rev_month, sum(revenue) OVER (PARTITON BY rev_year ORDER BY rev_month) (SELECT to_char(created_at, 'YYYY-MM') AS rev_month, tochar(created_at, 'YYYY') AS rev_year, sum(amount) AS revenue FROM invoice GROUP BY 1 ORDER BY 1) AS monthly_rev GROUP BY 1 ORDER BY 1
