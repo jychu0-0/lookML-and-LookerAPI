@@ -7,7 +7,7 @@ view: booked_revenue {
         , revenue_type
         , rev_rec_date
         , revenue
-        , order_id::text || barcode::text || rev_rec_date::text || revenue_type || revenue::text AS pkey -- check to see if this is unique
+        , order_id::text || barcode::text || trans_id || rev_rec_date::text || revenue_type || revenue::text AS pkey
       FROM
         uploads.barcoderevenue
        ;;
