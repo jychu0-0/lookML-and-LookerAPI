@@ -6,7 +6,6 @@ view: field_sales_staff{
         , ter.email
         , rep_name
         , region
-        , territory
         , job_title AS role
         , supervisor_id
         , supervisor_name
@@ -15,7 +14,7 @@ view: field_sales_staff{
       FROM costing.territories AS ter
       LEFT JOIN costing.employee AS emp on emp.email = ter.email
       WHERE job_title ILIKE '%Clinical Account%'
-        ;;
+      GROUP BY 1,2,3,4,5,6,7,8,9  ;;
 
       datagroup_trigger: etl_refresh
       indexes: ["employee_id","email"]
@@ -235,8 +234,8 @@ view: field_sales_revenue {
     }
   }
 
-explore: rev_exp_summary {}
-view: rev_exp_summary {
+explore: summary {}
+view: summary {
   derived_table: {
     sql:
           SELECT
@@ -296,30 +295,36 @@ view: rev_exp_summary {
 
   measure: expense {
     type: sum
+    value_format_name: usd
     sql: ${TABLE}.expense ;;
   }
 
   measure: volume {
     type: sum
+    value_format_name: usd
     sql: ${TABLE}.volume ;;
   }
 
   measure: revenue {
     type: sum
+    value_format_name: usd
     sql: ${TABLE}.revenue ;;
   }
 
   measure: expense_per_req {
     type: sum
+    value_format_name: usd
     sql:${TABLE}.expense_per_req;;
   }
 
   measure: revenue_per_req {
     type: sum
+    value_format_name: usd
     sql:${TABLE}.revenue_per_req;;
   }
   measure: rev_exp_ratio {
     type: sum
+    value_format_name: usd
     sql:${TABLE}.rev_exp_ratio;;
   }
 
