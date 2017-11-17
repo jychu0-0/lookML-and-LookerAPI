@@ -1,4 +1,4 @@
-view: field_sales_staff{
+view: field_sales_staff {
   derived_table: {
     sql:
       SELECT
@@ -22,10 +22,9 @@ view: field_sales_staff{
 
   }
 
-
-view: concur_expenses {
-  derived_table: {
-    sql:
+  view: concur_expenses {
+    derived_table: {
+      sql:
         SELECT
           con.employee_id
           , emp.email
@@ -84,10 +83,9 @@ view: concur_expenses {
     }
   }
 
-explore: field_sales_volume {}
-view: field_sales_volume {
-  derived_table: {
-    sql:
+  view: field_sales_volume {
+    derived_table: {
+      sql:
           SELECT
             emp.employee_id
             , emp.rep_name
@@ -107,62 +105,62 @@ view: field_sales_volume {
           LEFT JOIN ${field_sales_staff.SQL_TABLE_NAME} AS emp ON emp.employee_id = map.employee_id
           GROUP BY 1,2,3,4,5,6,7,8,9;;
 
-          indexes: ["employee_id","rep_name","email","region","role","status"]
-          datagroup_trigger: etl_refresh
+        indexes: ["employee_id","rep_name","email","region","role","status"]
+        datagroup_trigger: etl_refresh
 
+      }
+
+      dimension: employee_id {
+        type: number
+        sql: ${TABLE}.employee_id ;;
+      }
+
+      dimension: rep_name {
+        type: string
+        sql: ${TABLE}.rep_name ;;
+      }
+
+      dimension: email {
+        type: string
+        sql: ${TABLE}.email ;;
+      }
+
+      dimension: region {
+        type: string
+        sql: ${TABLE}.region ;;
+      }
+
+      dimension: role {
+        type: string
+        sql: ${TABLE}.role ;;
+      }
+
+      dimension: specialty {
+        type: string
+        sql: ${TABLE}.specialty;;
+      }
+
+      dimension: status {
+        type: string
+        sql: ${TABLE}.status;;
+      }
+
+      dimension_group: completed_on {
+        type: time
+        timeframes: [date,month,quarter,year]
+        sql: ${TABLE}.completed_on ;;
+      }
+
+      measure: volume {
+        type: sum
+        sql: ${TABLE}.volume ;;
+      }
     }
 
-    dimension: employee_id {
-      type: number
-      sql: ${TABLE}.employee_id ;;
-    }
 
-    dimension: rep_name {
-      type: string
-      sql: ${TABLE}.rep_name ;;
-    }
-
-    dimension: email {
-      type: string
-      sql: ${TABLE}.email ;;
-    }
-
-    dimension: region {
-      type: string
-      sql: ${TABLE}.region ;;
-    }
-
-    dimension: role {
-      type: string
-      sql: ${TABLE}.role ;;
-    }
-
-    dimension: specialty {
-      type: string
-      sql: ${TABLE}.specialty;;
-    }
-
-    dimension: status {
-      type: string
-      sql: ${TABLE}.status;;
-    }
-
-    dimension_group: completed_on {
-      type: time
-      timeframes: [date,month,quarter,year]
-      sql: ${TABLE}.completed_on ;;
-    }
-
-    measure: volume {
-      type: sum
-      sql: ${TABLE}.volume ;;
-    }
-  }
-
-
-view: field_sales_revenue {
-  derived_table: {
-    sql:
+    view: field_sales_revenue {
+      derived_table: {
+        sql:
           SELECT
             emp.employee_id
             , emp.rep_name
@@ -181,70 +179,65 @@ view: field_sales_revenue {
           LEFT JOIN costing.rep_id_map AS map ON cli.outside_salesperson = map.rep
           LEFT JOIN ${field_sales_staff.SQL_TABLE_NAME} AS emp ON emp.employee_id = map.employee_id
           GROUP BY 1,2,3,4,5,6,7,8;;
-          indexes: ["employee_id","rep_name","email","region","role","status"]
-          datagroup_trigger: etl_refresh
+        indexes: ["employee_id","rep_name","email","region","role","status"]
+        datagroup_trigger: etl_refresh
 
+      }
+
+      dimension: employee_id {
+        type: number
+        sql: ${TABLE}.employee_id ;;
+      }
+
+      dimension: rep_name {
+        type: string
+        sql: ${TABLE}.rep_name ;;
+      }
+
+      dimension: email {
+        type: string
+        sql: ${TABLE}.email ;;
+      }
+
+      dimension: region {
+        type: string
+        sql: ${TABLE}.region ;;
+      }
+
+      dimension: role {
+        type: string
+        sql: ${TABLE}.role ;;
+      }
+
+      dimension: specialty {
+        type: string
+        sql: ${TABLE}.specialty;;
+      }
+
+      dimension: status {
+        type: string
+        sql: ${TABLE}.status;;
+      }
+
+      dimension_group: rev_rec_date {
+        type: time
+        timeframes: [date,month,quarter,year]
+        sql: ${TABLE}.rev_rec_date ;;
+      }
+
+      measure: revenue {
+        type: sum
+        value_format_name: usd_0
+        sql: ${TABLE}.revenue ;;
+      }
     }
 
-    dimension: employee_id {
-      type: number
-      sql: ${TABLE}.employee_id ;;
-    }
-
-    dimension: rep_name {
-      type: string
-      sql: ${TABLE}.rep_name ;;
-    }
-
-    dimension: email {
-      type: string
-      sql: ${TABLE}.email ;;
-    }
-
-    dimension: region {
-      type: string
-      sql: ${TABLE}.region ;;
-    }
-
-    dimension: role {
-      type: string
-      sql: ${TABLE}.role ;;
-    }
-
-    dimension: specialty {
-      type: string
-      sql: ${TABLE}.specialty;;
-    }
-
-    dimension: status {
-      type: string
-      sql: ${TABLE}.status;;
-    }
-
-    dimension_group: rev_rec_date {
-      type: time
-      timeframes: [date,month,quarter,year]
-      sql: ${TABLE}.rev_rec_date ;;
-    }
-
-    measure: revenue {
-      type: sum
-      value_format_name: usd_0
-      sql: ${TABLE}.revenue ;;
-    }
-  }
-
-explore: summary {}
-view: summary {
-  derived_table: {
-    sql:
+    view: expense_summary {
+      derived_table: {
+        sql:
           SELECT
-            crs.month
+            crs.join_month
             , crs.employee_id
-            , crs.region
-            , crs.role
-            , crs.rep_name
-            , crs.email
             , SUM(total_expense) AS expense
             , SUM(volume) AS volume
             , SUM(revenue) AS revenue
@@ -252,80 +245,78 @@ view: summary {
             , SUM(revenue) / SUM(volume) AS revenue_per_req
             , SUM(revenue) / SUM(total_expense) AS rev_exp_ratio
           FROM ${field_sales_month_cross.SQL_TABLE_NAME} AS crs
-          LEFT JOIN ${concur_expenses.SQL_TABLE_NAME} AS exp ON exp.join_month = crs.join_month AND exp.employee_id = crs.employee_id
-          LEFT JOIN ${field_sales_volume.SQL_TABLE_NAME} AS vol ON exp.join_month = vol.join_month AND vol.employee_id = exp.employee_id
-          LEFT JOIN ${field_sales_revenue.SQL_TABLE_NAME} AS rev ON rev.join_month = vol.join_month AND rev.employee_id = vol.employee_id
-          GROUP BY 1,2,3,4,5,6
+          LEFT JOIN (
+            SELECT
+              employee_id
+              , join_month
+              , SUM(total_expense) AS total_expense
+            FROM ${concur_expenses.SQL_TABLE_NAME}
+            GROUP BY 1,2) AS exp ON exp.join_month = crs.join_month AND exp.employee_id = crs.employee_id
+          LEFT JOIN (
+            SELECT
+              employee_id
+              , join_month
+              , SUM(volume) AS volume
+            FROM ${field_sales_volume.SQL_TABLE_NAME}
+            GROUP BY 1,2) AS vol ON vol.join_month = exp.join_month AND vol.employee_id = exp.employee_id
+          LEFT JOIN (
+            SELECT
+              employee_id
+              , join_month
+              , SUM(revenue) AS revenue
+            FROM ${field_sales_revenue.SQL_TABLE_NAME}
+            GROUP BY 1,2) AS rev ON rev.join_month = vol.join_month AND rev.employee_id = vol.employee_id
+          GROUP BY 1,2
             ;;
-          indexes: ["employee_id","rep_name","email","region","role"]
-          datagroup_trigger: etl_refresh
+        indexes: ["employee_id","join_month"]
+        datagroup_trigger: etl_refresh
+
+      }
+
+      dimension: employee_id {
+        type: number
+        sql: ${TABLE}.employee_id ;;
+      }
+
+      dimension_group: join_month {
+        type: time
+        timeframes: [month,quarter,year]
+        sql: TO_DATE(${TABLE}.join_month || '-01', 'YYYY-MM-DD') ;;
+      }
+
+      measure: expense {
+        type: sum
+        value_format_name: usd
+        sql: ${TABLE}.expense ;;
+      }
+
+      measure: volume {
+        type: sum
+        value_format_name: usd
+        sql: ${TABLE}.volume ;;
+      }
+
+      measure: revenue {
+        type: sum
+        value_format_name: usd
+        sql: ${TABLE}.revenue ;;
+      }
+
+      measure: expense_per_req {
+        type: sum
+        value_format_name: usd
+        sql:${TABLE}.expense_per_req;;
+      }
+
+      measure: revenue_per_req {
+        type: sum
+        value_format_name: usd
+        sql:${TABLE}.revenue_per_req;;
+      }
+      measure: rev_exp_ratio {
+        type: sum
+        value_format_name: usd
+        sql:${TABLE}.rev_exp_ratio;;
+      }
 
     }
-
-  dimension: employee_id {
-    type: number
-    sql: ${TABLE}.employee_id ;;
-  }
-
-  dimension_group: month {
-    type: time
-    timeframes: [month,quarter,year]
-    sql: ${TABLE}.month ;;
-  }
-
-  dimension: rep_name {
-    type: string
-    sql: ${TABLE}.rep_name ;;
-  }
-
-  dimension: email {
-    type: string
-    sql: ${TABLE}.email ;;
-  }
-
-  dimension: region {
-    type: string
-    sql: ${TABLE}.region ;;
-  }
-
-  dimension: role {
-    type: string
-    sql: ${TABLE}.role ;;
-  }
-
-  measure: expense {
-    type: sum
-    value_format_name: usd
-    sql: ${TABLE}.expense ;;
-  }
-
-  measure: volume {
-    type: sum
-    value_format_name: usd
-    sql: ${TABLE}.volume ;;
-  }
-
-  measure: revenue {
-    type: sum
-    value_format_name: usd
-    sql: ${TABLE}.revenue ;;
-  }
-
-  measure: expense_per_req {
-    type: sum
-    value_format_name: usd
-    sql:${TABLE}.expense_per_req;;
-  }
-
-  measure: revenue_per_req {
-    type: sum
-    value_format_name: usd
-    sql:${TABLE}.revenue_per_req;;
-  }
-  measure: rev_exp_ratio {
-    type: sum
-    value_format_name: usd
-    sql:${TABLE}.rev_exp_ratio;;
-  }
-
-  }
