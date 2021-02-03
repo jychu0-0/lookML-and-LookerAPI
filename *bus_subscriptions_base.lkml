@@ -1,3 +1,4 @@
+## cleanup of stripe subscriptions data and implementation of some business rules to split up the population reported to business partners
 
 view: sub_base_cte {
   derived_table: {
