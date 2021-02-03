@@ -4,23 +4,23 @@ view: sub_base_cte {
     sql:
       SELECT
         eero_user_id::integer AS eero_user_id
-        , eero_user_email
         , stripe_customer_id
         , stripe_subscription_id
         , CASE
-          WHEN subscription_status ILIKE 'canceled' OR subscription_canceled IS NOT NULL THEN 'Canceled User'
-          WHEN stripe_plan_id = 4 THEN 'Free User'
-          WHEN subscription_start < previous_period_start THEN 'Existing User'
-          ELSE 'New User' END AS eero_user_type
+            WHEN subscription_status ILIKE 'canceled' OR subscription_canceled IS NOT NULL THEN 'Canceled User'
+            WHEN stripe_plan_id = 4 THEN 'Free User'
+            WHEN subscription_start < previous_period_start THEN 'Existing User'
+            ELSE 'New User' END AS eero_user_type
         , stripe_plan_id
         , stripe_plan_name
         , subscription_start
         , subscription_canceled
+        , trial_end
         , subscription_status
-          , previous_period_start
-          , previous_period_end
-          , upcoming_period_start
-          , upcoming_period_end
+        , previous_period_start
+        , previous_period_end
+        , upcoming_period_start
+        , upcoming_period_end
         , network_id
         , network_status
         , organization_id
@@ -28,7 +28,8 @@ view: sub_base_cte {
         , isp
         , org_deleted
         , price
-
+        , subscription_interval
+        , netsuite_item_id
       FROM (
         SELECT
           sc.id AS stripe_customer_id
@@ -44,8 +45,10 @@ view: sub_base_cte {
           , ((EXTRACT(YEAR FROM ADD_MONTHS(current_date,+1))  || '-' || EXTRACT(MONTH FROM ADD_MONTHS(current_date,+1)) || '-1')::date - 1)::date AS upcoming_period_end
           , initcap(ss.status)::varchar(13) AS subscription_status
           , ss.trial_start
-          , ss.trial_end
+          , MIN(ss.trial_end) AS trial_end
           , ss.is_deleted
+          , sp.interval AS subscription_interval
+          , sp.metadata_netsuite_service_sale_item_id AS netsuite_item_id
         FROM stripe2.customers sc
         INNER JOIN stripe2.subscriptions ss
           ON sc.id = ss.customer_id -- to get subscription dates for calculations
@@ -53,88 +56,66 @@ view: sub_base_cte {
           ON ss.plan_id = sp.id  -- to determine if the subscription is on isp/trial/normal
         WHERE stripe_subscription_id IS NOT NULL -- or is that eero Plus users have a stripe2.subscription, not stripe2.customer
           AND stripe_plan_name NOT IN ('mark.test','Test plan - Internal use ONLY') -- excluding non-real subscription plans
-
-
-      ) stripe_base
-
-
-
-
+        GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,15,16,17) stripe_base
       INNER JOIN (
         SELECT
           id AS eero_user_id
           , stripe_id
-          , email AS eero_user_email
+          --, email AS eero_user_email
         FROM core.users
-        WHERE env = 'PROD'
-
-      ) core_sub
-        ON stripe_base.stripe_customer_id = core_sub.stripe_id
-
-
-      INNER JOIN (
-
-      SELECT DISTINCT
-        cn.primary_user_id
-        , cn.id AS network_id
-        , isp.organization_id
-        , isp.partner_name
-        , isp.org_deleted
-        , cn.isp
-        , (CASE
-              WHEN cn.status = 'valid' then 'Active'
-              ELSE initcap(cn.status)
-            END)::varchar(13) AS network_status
-      FROM core.networks cn
-
-
-      INNER JOIN (
+        WHERE env = 'PROD') core_sub ON stripe_base.stripe_customer_id = core_sub.stripe_id
+      LEFT JOIN (
         SELECT DISTINCT
-          cona.organization_id
-          , co.name AS partner_name
-          , cona.network_id
-          , cona.deleted::date AS org_deleted
-        FROM (
-          SELECT organization_id, network_id, deleted::date AS deleted, env
-          FROM core.organization_network_admins
-          WHERE env = 'PROD'
-          AND deleted IS NULL
+          cn.primary_user_id
+          , cn.id AS network_id
+          , isp.organization_id
+          , isp.partner_name
+          , isp.org_deleted
+          , cn.isp
+          , (CASE
+                WHEN cn.status = 'valid' then 'Active'
+                ELSE initcap(cn.status)
+              END)::varchar(13) AS network_status
+        FROM core.networks cn
+        LEFT JOIN (
+          SELECT
+          DISTINCT cona.organization_id
+            , co.name AS partner_name
+            , cona.network_id
+            , cona.deleted::date AS org_deleted
+          FROM (
+            SELECT organization_id, network_id, deleted::date AS deleted, env
+            FROM core.organization_network_admins
+            WHERE env = 'PROD' AND deleted IS NULL
 
-        UNION
+            UNION
 
-        SELECT organization_id, network_id, max(deleted)::date AS deleted, env
-          FROM core.organization_network_admins
-          WHERE env = 'PROD'
-          AND ( (deleted::date < ((EXTRACT(YEAR FROM current_date) || '-' || EXTRACT(MONTH FROM current_date) || '-1')::date) AND deleted::date >= (EXTRACT(YEAR FROM ADD_MONTHS(current_date,-1)) || '-' || EXTRACT(MONTH FROM ADD_MONTHS(current_date, - 1)) || '-1')::date) OR deleted::date >= ((EXTRACT(YEAR FROM current_date) || '-' || EXTRACT(MONTH FROM current_date) || '-1')::date) )
-          AND network_id NOT IN (SELECT network_id
-          FROM core.organization_network_admins
-          WHERE env = 'PROD'
-          AND deleted IS NULL)
-          GROUP BY 1,2,4) cona
-        INNER JOIN (
-          SELECT *
-          FROM core.organizations
-          WHERE (deleted IS NULL OR deleted = 0)
-            AND owns_eeros = 1
-            AND env = 'PROD'
-            AND name not IN ('eero-tools')
-                ) co
-          ON cona.organization_id = co.id
-        LEFT JOIN core.network_admins cna
-          ON cona.network_id = cna.network_id
-            AND cona.env = cna.env
-        WHERE cna.env = 'PROD'
-
-          ) isp
-            ON isp.network_id = cn.id
-      WHERE cn.env = 'PROD' AND isp.organization_id IS NOT NULL
-      GROUP BY 1,2,3,4,5,6,7) details_sub ON details_sub.primary_user_id = core_sub.eero_user_id
+            SELECT organization_id, network_id, max(deleted)::date AS deleted, env
+            FROM core.organization_network_admins
+            WHERE env = 'PROD'
+              AND ( (deleted::date < ((EXTRACT(YEAR FROM current_date) || '-' || EXTRACT(MONTH FROM current_date) || '-1')::date) AND deleted::date >= (EXTRACT(YEAR FROM ADD_MONTHS(current_date,-1)) || '-' || EXTRACT(MONTH FROM ADD_MONTHS(current_date, - 1)) || '-1')::date) OR deleted::date >= ((EXTRACT(YEAR FROM current_date) || '-' || EXTRACT(MONTH FROM current_date) || '-1')::date) )
+              AND network_id NOT IN (
+                SELECT network_id
+                FROM core.organization_network_admins
+                WHERE env = 'PROD' AND deleted IS NULL)
+            GROUP BY 1,2,4) cona
+          LEFT JOIN (
+            SELECT *
+            FROM core.organizations
+            WHERE (deleted IS NULL OR deleted = 0)
+              AND owns_eeros = 1
+              AND env = 'PROD'
+              AND name not IN ('eero-tools')) co ON cona.organization_id = co.id
+          LEFT JOIN core.network_admins cna ON cona.network_id = cna.network_id AND cona.env = cna.env
+          WHERE cna.env = 'PROD') isp ON isp.network_id = cn.id
+        WHERE cn.env = 'PROD'
+        GROUP BY 1,2,3,4,5,6,7) details_sub ON details_sub.primary_user_id = core_sub.eero_user_id
              ;;
     sql_trigger_value: select count(*) from stripe2.subscriptions ;;
     distribution_style: even
     indexes: ["eero_user_id","subscription_start","subscription_canceled","partner_name","stripe_plan_id"]
   }
-  
+
   dimension: partner_name {
     type: string
     sql: ${TABLE}.partner_name ;;
@@ -146,10 +127,6 @@ view: sub_base_cte {
   dimension: eero_user_id {
     type: number
     sql: ${TABLE}.eero_user_id ;;
-  }
-  dimension: eero_user_email {
-    type: string
-    sql: ${TABLE}.eero_user_email ;;
   }
   dimension: network_id {
     type: number
@@ -195,14 +172,7 @@ view: sub_base_cte {
     type: date
     sql: ${TABLE}.subscription_canceled ;;
   }
-##  dimension: eeros_per_user {
-##    type: number
-##    sql: ${TABLE}.eeros_per_user ;;
-##  }
-##  dimension: days_to_bill {
-##    type: number
-##    sql: ${TABLE}.days_to_bill ;;
-##  }
+
   dimension: previous_period_start {
     type: date
     sql: ${TABLE}.previous_period_start ;;
@@ -219,18 +189,7 @@ view: sub_base_cte {
     type: date
     sql: ${TABLE}.upcoming_period_end ;;
   }
-##  dimension: previous_month_amount {
-##    type: number
-##    sql: ${TABLE}.previous_month_amount ;;
-##  }
-##  dimension: upcoming_month_amount {
-##    type: number
-##    sql: ${TABLE}.upcoming_month_amount ;;
-##  }
-##  dimension: source_type {
-##    type: string
-##    sql: ${TABLE}.source_type ;;
-##  }
+
   dimension: org_deleted {
     type: date
     sql: ${TABLE}.org_deleted ;;
@@ -246,25 +205,25 @@ view: existing_cte {
     sql:
       SELECT
         eero_user_id
-        , eero_user_email
         , stripe_customer_id
         , stripe_subscription_id
         , CASE
-            WHEN subscription_canceled > previous_period_end THEN 'Existing User'
-            ELSE eero_user_type END AS eero_user_type
+            WHEN subscription_canceled > previous_period_end THEN 'Existing User'::varchar(25)
+            ELSE eero_user_type::varchar(25) END AS eero_user_type
         , stripe_plan_id
         , stripe_plan_name
         , subscription_start
         , CASE
             WHEN subscription_canceled > previous_period_end THEN NULL
             ELSE subscription_canceled END AS subscription_canceled
+        , trial_end
         , CASE
-            WHEN subscription_canceled > previous_period_end THEN 'Active'
-            ELSE subscription_status END AS subscription_status
-          , previous_period_start
-          , previous_period_end
-          , upcoming_period_start
-          , upcoming_period_end
+            WHEN subscription_canceled > previous_period_end THEN 'Active'::varchar(13)
+            ELSE subscription_status::varchar(13) END as subscription_status
+        , previous_period_start
+        , previous_period_end
+        , upcoming_period_start
+        , upcoming_period_end
         , sbc.network_id
         , network_status
         , organization_id
@@ -278,13 +237,13 @@ view: existing_cte {
         ON sbc.network_id = cns.network_id
       INNER JOIN core.eeros ce
         ON ce.id = cns.eero_id
-      WHERE (eero_user_type = 'Existing User'
+      WHERE (eero_user_type = 'Existing User' -- include users that are defined as exisiting
         AND cns.joined IS NOT NULL
         AND cns.revoked IS NULL)
-          OR (eero_user_type = 'Canceled User'
+          OR (eero_user_type = 'Canceled User' -- include users that are defined as canceled now, after month end, but were existing in the billing period
           AND cns.joined IS NOT NULL
         AND cns.revoked IS NULL
-        AND subscription_start >= previous_period_start
+        AND subscription_start <= previous_period_start
         AND subscription_canceled > previous_period_end)
       GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22
 
@@ -295,14 +254,14 @@ view: existing_cte {
 
       SELECT
         eero_user_id
-        , eero_user_email
         , stripe_customer_id
         , stripe_subscription_id
-        , 'Existing User' AS eero_user_type
+        , 'Existing User'::varchar(25) AS eero_user_type
         , stripe_plan_id
         , stripe_plan_name
         , min_subscription_start AS subscription_start
         , NULL::date AS subscription_canceled
+        , trial_end
         , 'Active'::varchar(13) AS subscription_status
         , previous_period_start
         , previous_period_end
@@ -320,7 +279,6 @@ view: existing_cte {
       FROM (
         SELECT
           eero_user_id
-          , eero_user_email
           , stripe_customer_id
           , MAX(stripe_subscription_id) AS stripe_subscription_id
           , stripe_plan_id
@@ -329,10 +287,11 @@ view: existing_cte {
           , MAX(subscription_start)::date AS max_subscription_start
           , MIN(subscription_canceled)::date AS min_subscription_canceled
           , MAX(subscription_canceled)::date AS max_subscription_canceled
-            , previous_period_start
-            , previous_period_end
-            , upcoming_period_start
-            , upcoming_period_end
+          , trial_end
+          , previous_period_start
+          , previous_period_end
+          , upcoming_period_start
+          , upcoming_period_end
           , sbc.network_id
           , network_status
           , organization_id
@@ -345,16 +304,15 @@ view: existing_cte {
           ON sbc.network_id = cns.network_id
         INNER JOIN core.eeros ce
           ON ce.id = cns.eero_id
-        WHERE (eero_user_type = 'Canceled User'
+        WHERE (eero_user_type = 'Canceled User' -- include users who canceled in the prior period and started a new subscription in the same period
           AND cns.joined IS NOT NULL
-          AND cns.revoked IS NULL
           AND sbc.eero_user_id  IN (
               SELECT eero_user_id
               FROM ${sub_base_cte.SQL_TABLE_NAME}  sbc
               WHERE eero_user_type = 'New User'
                 AND subscription_start >= previous_period_start
                 AND subscription_start <= previous_period_end))
-            OR (eero_user_type = 'New User'
+            OR (eero_user_type = 'New User' -- include users who are new in the prior period and canceled a subscription in the same period
               AND cns.joined IS NOT NULL
               AND cns.revoked IS NULL
               AND sbc.eero_user_id IN (
@@ -363,9 +321,9 @@ view: existing_cte {
               WHERE eero_user_type = 'Canceled User'
                 AND subscription_canceled >= previous_period_start
                 AND subscription_canceled <= previous_period_end))
-        GROUP BY 1,2,3,5,6,11,12,13,14,15,16,17,18,19,20,21) sub
+        GROUP BY 1,2,4,5,10,11,12,13,14,15,16,17,18,19,20,21) sub
         WHERE max_subscription_start >= max_subscription_canceled
-          AND max_subscription_start - max_subscription_canceled < 15
+          AND max_subscription_start - max_subscription_canceled < 15 --  collapse where the period of cancellation and new subscription was < 15 days and treat as if subscription was not canceled.
         GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22
              ;;
     sql_trigger_value: select count(*) from ${sub_base_cte.SQL_TABLE_NAME} sbc ;;
@@ -385,7 +343,6 @@ view: norm_cases_cte {
 
       SELECT
         eero_user_id
-        , eero_user_email
         , stripe_customer_id
         , stripe_subscription_id
         , eero_user_type
@@ -393,11 +350,12 @@ view: norm_cases_cte {
         , stripe_plan_name
         , subscription_start
         , subscription_canceled
+        , trial_end
         , subscription_status
-          , previous_period_start
-          , previous_period_end
-          , upcoming_period_start
-          , upcoming_period_end
+        , previous_period_start
+        , previous_period_end
+        , upcoming_period_start
+        , upcoming_period_end
         , sbc.network_id
         , network_status
         , organization_id
@@ -411,17 +369,11 @@ view: norm_cases_cte {
         ON sbc.network_id = cns.network_id
       INNER JOIN core.eeros ce
         ON ce.id = cns.eero_id
-      WHERE eero_user_type = 'New User'
+      WHERE eero_user_type = 'New User' -- this is to now include all remaining new users who weren't a part of the population of customers who canceled/started new subscriptions above
         AND cns.joined IS NOT NULL
         AND cns.revoked IS NULL
         AND subscription_start >= previous_period_start
         AND subscription_start <= previous_period_end
-        AND sbc.eero_user_id NOT IN (
-            SELECT eero_user_id
-            FROM ${sub_base_cte.SQL_TABLE_NAME}  sbc
-            WHERE eero_user_type = 'Canceled User'
-              AND subscription_canceled >= previous_period_start
-              AND subscription_canceled <= previous_period_end)
         AND sbc.eero_user_id NOT IN (
             SELECT eero_user_id
             FROM ${existing_cte.SQL_TABLE_NAME} existing)
@@ -434,7 +386,6 @@ view: norm_cases_cte {
 
       SELECT
         eero_user_id
-        , eero_user_email
         , stripe_customer_id
         , stripe_subscription_id
         , eero_user_type
@@ -442,11 +393,12 @@ view: norm_cases_cte {
         , stripe_plan_name
         , MIN(subscription_start) AS subscription_start
         , MAX(subscription_canceled) AS subscription_canceled
+        , trial_end
         , subscription_status
-          , previous_period_start
-          , previous_period_end
-          , upcoming_period_start
-          , upcoming_period_end
+        , previous_period_start
+        , previous_period_end
+        , upcoming_period_start
+        , upcoming_period_end
         , sbc.network_id
         , network_status
         , organization_id
@@ -460,18 +412,15 @@ view: norm_cases_cte {
         ON sbc.network_id = cns.network_id
       INNER JOIN core.eeros ce
         ON ce.id = cns.eero_id
-      WHERE eero_user_type = 'Canceled User'
+      WHERE eero_user_type = 'Canceled User' -- this is to now include all remaining canceled users who weren't a part of the population of customers who canceled/started new subscriptions above
         AND cns.joined IS NOT NULL
         AND cns.revoked IS NULL
         AND sbc.eero_user_id NOT IN (
             SELECT eero_user_id
-            FROM ${sub_base_cte.SQL_TABLE_NAME} sbc
-            WHERE eero_user_type = 'New User'
-              AND subscription_start >= previous_period_start
-              AND subscription_start <= previous_period_end)
+            FROM ${existing_cte.SQL_TABLE_NAME} existing)
         AND subscription_canceled >= previous_period_start
-        AND subscription_canceled <= previous_period_end
-      GROUP BY 1,2,3,4,5,6,7,10,11,12,13,14,15,16,17,18,19,20,21,22
+      GROUP BY 1,2,3,4,5,6,9,10,11,12,13,14,15,16,17,18,19,20,21,22
+
 
       UNION ALL
 
@@ -479,7 +428,6 @@ view: norm_cases_cte {
 
       SELECT
         eero_user_id
-        , eero_user_email
         , stripe_customer_id
         , stripe_subscription_id
         , eero_user_type
@@ -487,6 +435,7 @@ view: norm_cases_cte {
         , stripe_plan_name
         , subscription_start
         , subscription_canceled
+        , trial_end
         , subscription_status
         , previous_period_start
         , previous_period_end
@@ -500,11 +449,9 @@ view: norm_cases_cte {
         , unit_serial_number
         , org_deleted
         , price
-
       FROM (
         SELECT
           eero_user_id
-          , eero_user_email
           , stripe_customer_id
           , stripe_subscription_id
           , eero_user_type
@@ -516,13 +463,14 @@ view: norm_cases_cte {
           , MAX(subscription_start)::date AS max_subscription_start
           , MIN(subscription_canceled)::date AS min_subscription_canceled
           , MAX(subscription_canceled)::date AS max_subscription_canceled
+          , trial_end
           , subscription_status
-            , previous_period_start
-            , previous_period_end
-            , upcoming_period_start
-            , upcoming_period_end
+          , previous_period_start
+          , previous_period_end
+          , upcoming_period_start
+          , upcoming_period_end
           , sbc.network_id
-          , network_status
+          , network_status::varchar(25)
           , organization_id
           , partner_name
           , ce.serial_number AS unit_serial_number
@@ -535,7 +483,6 @@ view: norm_cases_cte {
           ON ce.id = cns.eero_id
         WHERE (eero_user_type = 'Canceled User'
           AND cns.joined IS NOT NULL
-          AND cns.revoked IS NULL
           AND sbc.eero_user_id  IN (
               SELECT eero_user_id
               FROM ${sub_base_cte.SQL_TABLE_NAME} sbc
@@ -551,9 +498,9 @@ view: norm_cases_cte {
               WHERE eero_user_type = 'Canceled User'
                 AND subscription_canceled >= previous_period_start
                 AND subscription_canceled <= previous_period_end))
-        GROUP BY 1,2,3,4,5,6,7,8,9,14,15,16,17,18,19,20,21,22,23,24,25) sub
+        GROUP BY 1,2,3,4,5,6,7,8,13,14,15,16,17,18,19,20,21,22,23,24,25) sub
         WHERE max_subscription_start > max_subscription_canceled
-          AND max_subscription_start - max_subscription_canceled >= 15
+          AND max_subscription_start - max_subscription_canceled >= 15 -- this is to separate out the users who had cancellations but new subscriptions >= 15 days and both subscriptions lines needing to be included
           AND subscription_start >= previous_period_start
             AND subscription_start <= previous_period_end
         GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22
@@ -565,7 +512,6 @@ view: norm_cases_cte {
 
       SELECT
         eero_user_id
-        , eero_user_email
         , stripe_customer_id
         , stripe_subscription_id
         , eero_user_type
@@ -573,13 +519,14 @@ view: norm_cases_cte {
         , stripe_plan_name
         , subscription_start
         , subscription_canceled
+        , trial_end
         , subscription_status
-          , previous_period_start
-          , previous_period_end
-          , upcoming_period_start
-          , upcoming_period_end
+        , previous_period_start
+        , previous_period_end
+        , upcoming_period_start
+        , upcoming_period_end
         , sbc.network_id
-        , network_status
+        , network_status::varchar(25)
         , organization_id
         , partner_name
         , 'Free Users with Active Node Session'::varchar(100) AS source_type
@@ -591,7 +538,7 @@ view: norm_cases_cte {
         ON sbc.network_id = cns.network_id
       INNER JOIN core.eeros ce
         ON ce.id = cns.eero_id
-      WHERE eero_user_type = 'Free User'
+      WHERE eero_user_type = 'Free User' -- pulling in free users who have active node sessions
         AND cns.joined IS NOT NULL
         AND cns.revoked IS NULL
         AND sbc.eero_user_id NOT IN (
@@ -615,7 +562,6 @@ view: norm_cases_w_revoked_cancel_cte {
 
       SELECT
         eero_user_id
-        , eero_user_email
         , stripe_customer_id
         , MAX(stripe_subscription_id) AS stripe_subscription_id
         , eero_user_type
@@ -623,13 +569,14 @@ view: norm_cases_w_revoked_cancel_cte {
         , stripe_plan_name
         , MIN(subscription_start) AS subscription_start
         , MAX(subscription_canceled) AS subscription_canceled
+        , trial_end
         , subscription_status
-          , previous_period_start
-          , previous_period_end
-          , upcoming_period_start
-          , upcoming_period_end
+        , previous_period_start
+        , previous_period_end
+        , upcoming_period_start
+        , upcoming_period_end
         , MAX(sbc.network_id) AS network_id
-        , 'Inactive' AS network_status
+        , 'Inactive'::varchar(25) AS network_status
         , organization_id
         , partner_name
         , 'Canceled Users with No Active Node Session'::varchar(100) AS source_type
@@ -641,14 +588,13 @@ view: norm_cases_w_revoked_cancel_cte {
         ON sbc.network_id = cns.network_id
       INNER JOIN core.eeros ce
         ON ce.id = cns.eero_id
-      WHERE eero_user_type = 'Canceled User'
+      WHERE eero_user_type = 'Canceled User' -- every pdt above filters on having active node sessons. canceled users no longer have active node sessions if they return eeros to ISP in conjunctioin with ending secure. here i capture canceled subscriptiions with node sessions revoked in the month.
         AND cns.joined IS NOT NULL
         AND cns.revoked IS NOT NULL
         AND sbc.eero_user_id NOT IN (SELECT eero_user_id FROM ${norm_cases_cte.SQL_TABLE_NAME} norm_cases)
-        AND ce.serial_number NOT IN (SELECT unit_serial_number FROM ${norm_cases_cte.SQL_TABLE_NAME} norm_cases WHERE eero_user_type IN ('Existing User'))
         AND subscription_canceled >= previous_period_start
         AND subscription_canceled <= previous_period_end
-      GROUP BY 1,2,3,5,6,7,10,11,12,13,14,16,17,18,19,20,21,22
+      GROUP BY 1,2,4,5,6,9,10,11,12,13,14,16,17,18,19,20,21,22
       ;;
     sql_trigger_value: select count(*) from ${norm_cases_cte.SQL_TABLE_NAME} norm_cases_cte ;;
     distribution_style: even
@@ -667,7 +613,6 @@ view: norm_w_revoked_inactive_cte {
 
       SELECT
         eero_user_id
-        , eero_user_email
         , stripe_customer_id
         , stripe_subscription_id
         , eero_user_type
@@ -675,13 +620,14 @@ view: norm_w_revoked_inactive_cte {
         , stripe_plan_name
         , MIN(subscription_start) AS subscription_start
         , NULL::date AS subscription_canceled
+        , trial_end
         , subscription_status
-          , previous_period_start
-          , previous_period_end
-          , upcoming_period_start
-          , upcoming_period_end
+        , previous_period_start
+        , previous_period_end
+        , upcoming_period_start
+        , upcoming_period_end
         , MAX(sbc.network_id) AS network_id
-        , 'Inactive' AS network_status
+        , 'Inactive'::varchar(25) AS network_status
         , organization_id
         , partner_name
         , 'Active Subscriptions with No Active Node Session'::varchar(100) AS source_type
@@ -693,14 +639,13 @@ view: norm_w_revoked_inactive_cte {
         ON sbc.network_id = cns.network_id
       INNER JOIN core.eeros ce
         ON ce.id = cns.eero_id
-      WHERE eero_user_type IN ('Existing User','New User','Free User')
+      WHERE eero_user_type IN ('Existing User','New User','Free User') -- we found that ISPs are not great at managing subscriptions. users would stop using eeros but the ISPs would not terminate the subscription. i'm pulling in active subscriptions with no active node sessions for reporting to the ISP on subscriptions that need to be cleaned up
         AND cns.joined IS NOT NULL
         AND cns.revoked IS NOT NULL
         AND subscription_status NOT IN ('Canceled')
         AND subscription_start <= previous_period_end
         AND sbc.eero_user_id NOT IN (SELECT eero_user_id FROM ${norm_cases_w_revoked_cancel_cte.SQL_TABLE_NAME} norm_cases_w_revoked_cancel_cte)
-        AND ce.serial_number NOT IN (SELECT unit_serial_number FROM ${norm_cases_w_revoked_cancel_cte.SQL_TABLE_NAME} norm_cases_w_revoked_cancel_cte WHERE eero_user_type IN ('Existing User','New User','Free User'))-- potentially remove
-      GROUP BY 1,2,3,4,5,6,7,9,10,11,12,13,14,16,17,18,19,20,21,22;;
+      GROUP BY 1,2,3,4,5,6,8,9,10,11,12,13,14,16,17,18,19,20,21,22;;
     sql_trigger_value: select count(*) from ${norm_cases_w_revoked_cancel_cte.SQL_TABLE_NAME} norm_cases_w_revoked_cancel_cte ;;
     distribution_style: even
     indexes: ["eero_user_id","subscription_start","subscription_canceled","partner_name","stripe_plan_id"]
@@ -718,24 +663,24 @@ view: subscriptions {
 
       SELECT
         eero_user_id
-        , eero_user_email
         , stripe_customer_id
         , stripe_subscription_id
         , CASE
-            WHEN eero_user_type = 'Canceled User' AND subscription_start < previous_period_start THEN 'Existing User'
-            WHEN eero_user_type = 'Canceled User' AND subscription_start >= previous_period_start THEN 'New User'
-            ELSE eero_user_type END AS eero_user_type
+            WHEN eero_user_type = 'Canceled User' AND subscription_start < previous_period_start THEN 'Existing User'::varchar(25)
+            WHEN eero_user_type = 'Canceled User' AND subscription_start >= previous_period_start THEN 'New User'::varchar(25)
+            ELSE eero_user_type::varchar(25) END AS eero_user_type
         , stripe_plan_id
         , stripe_plan_name
         , MIN(subscription_start) AS subscription_start
         , NULL::date AS subscription_canceled
+        , trial_end
         , subscription_status
-          , previous_period_start
-          , previous_period_end
-          , upcoming_period_start
-          , upcoming_period_end
+        , previous_period_start
+        , previous_period_end
+        , upcoming_period_start
+        , upcoming_period_end
         , MAX(sbc.network_id) AS network_id
-        , 'Inactive' AS network_status
+        , 'Inactive'::varchar(25) AS network_status
         , organization_id
         , partner_name
         , 'Inactive Subscriptions with No Active Node Session'::varchar(100) AS source_type
@@ -747,17 +692,16 @@ view: subscriptions {
         ON sbc.network_id = cns.network_id
       INNER JOIN core.eeros ce
         ON ce.id = cns.eero_id
-      WHERE eero_user_type IN ('Canceled User')
+      WHERE eero_user_type IN ('Canceled User') -- found that some canceled users did not have revoked node sessions in the billing month, causing them to fall off. added this union to capture inactive subscriptions with on active/revoked node session in billing month.
         AND cns.joined IS NOT NULL
-      --  AND cns.revoked IS NOT NULL
         AND subscription_canceled > previous_period_end
         AND sbc.eero_user_id NOT IN (SELECT eero_user_id FROM ${norm_w_revoked_inactive_cte.SQL_TABLE_NAME} norm_w_revoked_inactive)
-      GROUP BY 1,2,3,4,5,6,7,9,10,11,12,13,14,16,17,18,19,20,21,22;;
+      GROUP BY 1,2,3,4,5,6,8,9,10,11,12,13,14,16,17,18,19,20,21,22;;
     sql_trigger_value: select count(*) from ${norm_w_revoked_inactive_cte.SQL_TABLE_NAME} norm_w_revoked_inactive ;;
     distribution_style: even
     indexes: ["eero_user_id","subscription_start","subscription_canceled","partner_name","stripe_plan_id"]
   }
-  
+
   dimension: eero_user_id {
     type: number
     sql: ${TABLE}.eero_user_id ;;
@@ -769,10 +713,6 @@ view: subscriptions {
   dimension: stripe_plan_id {
     type: number
     sql: ${TABLE}.stripe_plan_id ;;
-  }
-  dimension: eero_user_email {
-    type: string
-    sql: ${TABLE}.eero_user_email ;;
   }
   dimension: unit_serial_number {
     type: string
@@ -821,174 +761,5 @@ view: subscriptions {
   dimension: organization_id {
     type: number
     sql: ${TABLE}.organization_id ;;
-  }
-}
-
-view: bus_secure_reporting {
-  derived_table: {
-    sql:
-      SELECT
-          partner_name AS company_name
-          , eero_user_id AS user_id
-          , network_id
-          , unit_serial_number AS serial_number
-          , eero_user_type
-          , stripe_subscription_id
-          , stripe_plan_name
-          , subscription_status
-          , network_status
-          , MIN(subscription_start) AS subscription_started
-          , subscription_canceled
-          , eeros_per_user
-      --    , monthly_rate
-          , days_to_bill
-          , ROUND((monthly_rate * (days_to_bill::float/days_in_previous_period::float) / eeros_per_user),2) AS previous_month_amount
-          , ROUND(((CASE
-              WHEN eero_user_type = 'Canceled User' THEN 0.00
-              WHEN eero_user_type = 'Free User' THEN 0.00
-              ELSE monthly_rate END) / eeros_per_user),2) AS upcoming_month_amount
-          , source_type
-          , org_deleted
-          , price
-          , paid_start
-          , stripe_plan_id
-          , trial_end
-
-      FROM (
-      SELECT
-          *
-          , DENSE_RANK() OVER (PARTITION BY eero_user_id, partner_name ORDER BY unit_serial_number)
-              + DENSE_RANK() OVER (PARTITION BY eero_user_id, partner_name ORDER BY unit_serial_number DESC) - 1 AS eeros_per_user -- work-around to a COUNT(DISTINCT) in a window function
-          , CASE
-              WHEN eero_user_type = 'Free User' THEN 0.00
-              WHEN eero_user_type = 'New User' AND subscription_start > previous_period_end THEN 0.00
-              WHEN paid_start > previous_period_end THEN 0.00
-              ELSE
-                  CASE
-                      WHEN partner_name = 'Sonic' AND stripe_plan_name iLIKE '%yearly%' THEN (price/12) * .25
-                      WHEN partner_name = 'Sonic' AND (stripe_plan_name iLIKE '%monthly%' OR stripe_plan_name = 'eero Plus' OR stripe_plan_id = 1) THEN price * .25
-                      WHEN partner_name = 'Eastlink' THEN 2.00
-                      WHEN partner_name IN ('RCN','Grande','Wave') THEN 4.00
-                      WHEN partner_name = 'Rogers Communications Canada Inc.' THEN 7.00
-                      WHEN partner_name = 'Wide Open West Finance, LLC (dba Wow! Internet)' THEN 6.00
-                      WHEN partner_name = 'Blue Ridge' THEN 6.00
-                      WHEN partner_name = 'Buckeye Broadband' THEN 6.00
-                      WHEN partner_name = 'Buckeye Broadband Lab' THEN 6.00
-                      WHEN partner_name = 'Safe Haven' THEN 4.00
-                      WHEN partner_name = 'Hotwire Communications' THEN 5.00 END
-              END AS monthly_rate
-        , (previous_period_end - previous_period_start + 1) AS days_in_previous_period
-        , CASE
-            WHEN eero_user_type = 'Existing User' THEN days_in_previous_period
-            WHEN eero_user_type = 'New User' AND paid_start = previous_period_start THEN days_in_previous_period
-            WHEN eero_user_type = 'New User' THEN previous_period_end - paid_start + 1
-            WHEN eero_user_type = 'Canceled User' AND subscription_canceled = previous_period_start THEN 0
-            WHEN eero_user_type = 'Canceled User' AND paid_start > previous_period_start THEN (subscription_canceled - previous_period_end) + (previous_period_start - paid_start)
-            WHEN eero_user_type = 'Canceled User' THEN subscription_canceled - previous_period_end
-            WHEN eero_user_type = 'Free User' THEN 0
-            END AS days_to_bill
-
-      FROM (
-      SELECT *
-        , CASE
-              WHEN partner_name IN ('RCN','Grande','Wave') AND subscription_start::date >= '2020-01-06'::date AND subscription_start::date < '2020-06-01'::date THEN (DATEADD(day, 90, subscription_start))::date
-              WHEN trial_dates.trial_end IS NOT NULL AND trial_dates.trial_end > subscription_start THEN (DATEADD(day, 1, trial_dates.trial_end))::date
-              ELSE  subscription_start::date END AS paid_start
-      FROM ${subscriptions.SQL_TABLE_NAME} subs
-      LEFT JOIN (
-        SELECT id, trial_end::date as trial_end from stripe2.subscriptions) trial_dates ON trial_dates.id = subs.stripe_subscription_id
-              ) paid_start_sub
-      
-      WHERE org_deleted IS NULL OR org_deleted > subscription_start) calc_sub
-      GROUP BY 1,2,3,4,5,6,7,8,9,11,12,13,14,15,16,17,18,19,20,21
-             ;;
-    persist_for: "24 hours"
-    distribution_style: even
-    indexes: ["user_id","subscription_started","subscription_canceled","company_name"]
-  }
-  
-  dimension: company_name {
-    type: string
-    sql: ${TABLE}.company_name ;;
-  }
-  dimension: user_id {
-    type: number
-    sql: ${TABLE}.user_id ;;
-  }
-  dimension: network_id {
-    type: number
-    sql: ${TABLE}.network_id ;;
-  }
-  dimension: serial_number {
-    type: string
-    sql: ${TABLE}.serial_number ;;
-  }
-  dimension: eero_user_type {
-    type: string
-    sql: ${TABLE}.eero_user_type ;;
-  }
-  dimension: stripe_subscription_id {
-    type: string
-    sql: ${TABLE}.stripe_subscription_id ;;
-  }
-  dimension: stripe_plan_name {
-    type: string
-    sql: ${TABLE}.stripe_plan_name ;;
-  }
-  dimension: stripe_plan_id {
-    type: string
-    sql: ${TABLE}.stripe_plan_id ;;
-  }
-  dimension: price  {
-    type: number
-    sql: ${TABLE}.price ;;
-  }
-  dimension: subscription_status {
-    type: string
-    sql: ${TABLE}.subscription_status ;;
-  }
-  dimension: network_status {
-    type: string
-    sql: ${TABLE}.network_status ;;
-  }
-  dimension: subscription_started {
-    type: date
-    sql: ${TABLE}.subscription_started ;;
-  }
-  dimension: paid_start {
-    type: date
-    sql: ${TABLE}.paid_start ;;
-  }
-  dimension: trial_end {
-    type: string
-    sql: CASE WHEN ${TABLE}.trial_end IS NULL THEN 'n/a'::text ELSE ${TABLE}.trial_end::text END;;
-  }
-  dimension: subscription_canceled {
-    type: string
-    sql: CASE WHEN ${TABLE}.subscription_canceled IS NULL THEN 'n/a'::text ELSE ${TABLE}.subscription_canceled::text END;;
-  }
-  dimension: eeros_per_user {
-    type: number
-    sql: ${TABLE}.eeros_per_user ;;
-  }
-  dimension: days_to_bill {
-    type: number
-    sql: ${TABLE}.days_to_bill ;;
-  }
-  dimension: previous_month_amount {
-    type: number
-    sql: ${TABLE}.previous_month_amount ;;
-  }
-  dimension: upcoming_month_amount {
-    type: number
-    sql: ${TABLE}.upcoming_month_amount ;;
-  }
-  dimension: source_type {
-    type: string
-    sql: ${TABLE}.source_type ;;
-  }
-  dimension: org_deleted {
-    type: date
-    sql: ${TABLE}.org_deleted ;;
   }
 }
