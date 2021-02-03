@@ -1,4 +1,4 @@
-
+## examples using liquid variables in Looker
 view: material_requirements_planning {
   derived_table: {
     sql:
